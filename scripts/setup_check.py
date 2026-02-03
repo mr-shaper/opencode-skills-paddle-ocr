@@ -1,31 +1,83 @@
 #!/usr/bin/env python3
-"""Check PaddleOCR environment setup."""
+"""Check OCR Skill environment setup (DeepSeek-OCR + PaddleOCR)."""
 
 import subprocess
 import sys
 
 
+def check_ollama():
+    """Check if Ollama is installed."""
+    try:
+        result = subprocess.run(
+            ["ollama", "--version"],
+            capture_output=True,
+            text=True
+        )
+        if result.returncode == 0:
+            version = result.stdout.strip() or result.stderr.strip()
+            print(f"[OK] Ollama installed: {version}")
+            return True
+    except FileNotFoundError:
+        pass
+    print("[FAIL] Ollama not found. Install with: brew install ollama")
+    return False
+
+
+def check_ollama_running():
+    """Check if Ollama server is running."""
+    try:
+        import requests
+        response = requests.get("http://localhost:11434/api/tags", timeout=5)
+        if response.status_code == 200:
+            print("[OK] Ollama server is running")
+            return True
+    except Exception:
+        pass
+    print("[FAIL] Ollama server not running. Start with: brew services start ollama")
+    return False
+
+
+def check_deepseek_model():
+    """Check if DeepSeek-OCR model is installed."""
+    try:
+        result = subprocess.run(
+            ["ollama", "list"],
+            capture_output=True,
+            text=True
+        )
+        if "deepseek-ocr" in result.stdout.lower():
+            for line in result.stdout.split('\n'):
+                if 'deepseek-ocr' in line.lower():
+                    print(f"[OK] DeepSeek-OCR model installed: {line.strip()}")
+                    return True
+    except Exception:
+        pass
+    print("[WARN] DeepSeek-OCR model not found. Pull with:")
+    print("       ollama pull deepseek-ocr")
+    return False
+
+
 def check_paddleocr():
-    """Check if PaddleOCR is installed."""
+    """Check if PaddleOCR is installed (for fast mode)."""
     try:
         import paddleocr
         version = getattr(paddleocr, '__version__', 'installed')
-        print(f"[OK] PaddleOCR installed: {version}")
+        print(f"[OK] PaddleOCR installed: {version} (for fast mode)")
         return True
     except ImportError:
-        print("[FAIL] PaddleOCR not found. Install with: pip install paddleocr paddlepaddle")
-        return False
+        print("[WARN] PaddleOCR not found (fast mode unavailable)")
+        print("       Install with: pip install paddleocr paddlepaddle")
+        return None  # Warning, not failure
 
 
-def check_paddlepaddle():
-    """Check if PaddlePaddle is installed."""
+def check_requests():
+    """Check if requests is installed."""
     try:
-        import paddle
-        version = paddle.__version__
-        print(f"[OK] PaddlePaddle installed: {version}")
+        import requests
+        print(f"[OK] requests installed")
         return True
     except ImportError:
-        print("[FAIL] PaddlePaddle not found. Install with: pip install paddlepaddle")
+        print("[FAIL] requests not found. Install with: pip install requests")
         return False
 
 
@@ -37,21 +89,9 @@ def check_pdf2image():
         print(f"[OK] pdf2image installed: {version}")
         return True
     except ImportError:
-        print("[FAIL] pdf2image not found. Install with: pip install pdf2image")
-        return False
-
-
-def check_pillow():
-    """Check if Pillow is installed."""
-    try:
-        from PIL import Image
-        import PIL
-        version = PIL.__version__
-        print(f"[OK] Pillow installed: {version}")
-        return True
-    except ImportError:
-        print("[FAIL] Pillow not found. Install with: pip install Pillow")
-        return False
+        print("[WARN] pdf2image not found (PDF support unavailable)")
+        print("       Install with: pip install pdf2image")
+        return None
 
 
 def check_poppler():
@@ -62,145 +102,165 @@ def check_poppler():
             capture_output=True,
             text=True
         )
-        # pdftoppm outputs version to stderr
         version = result.stderr.strip() if result.stderr else "installed"
-        print(f"[OK] Poppler installed (for PDF support): {version}")
+        print(f"[OK] Poppler installed: {version}")
         return True
     except FileNotFoundError:
-        print("[WARN] Poppler not found. PDF support requires:")
-        print("       brew install poppler")
-        return False
+        print("[WARN] Poppler not found (PDF support unavailable)")
+        print("       Install with: brew install poppler")
+        return None
 
 
-def check_model_cache():
-    """Check if PaddleOCR models are cached."""
-    import os
-    from pathlib import Path
-
-    cache_dir = Path.home() / ".paddlex" / "official_models"
-    if cache_dir.exists():
-        models = list(cache_dir.iterdir())
-        if models:
-            print(f"[OK] Model cache found: {cache_dir}")
-            print(f"     {len(models)} model(s) cached")
-            return True
-
-    print("[INFO] No cached models found. Will download on first run (~200MB)")
-    return None  # Not a failure, just info
-
-
-def test_ocr():
-    """Quick test of OCR functionality."""
-    print("\n--- Quick OCR Test ---")
+def test_deepseek_ocr():
+    """Quick test of DeepSeek-OCR functionality."""
+    print("\n--- Quick DeepSeek-OCR Test ---")
     try:
-        import os
+        import requests
+        import base64
         import io
         from PIL import Image, ImageDraw
 
-        # Create a simple test image with text
+        # Create a simple test image
         img = Image.new('RGB', (200, 50), color='white')
         draw = ImageDraw.Draw(img)
         draw.text((10, 10), "Hello OCR Test", fill='black')
 
-        # Save to temp file
-        import tempfile
-        with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as f:
-            img.save(f.name, 'PNG')
-            temp_path = f.name
+        # Save to bytes
+        img_bytes = io.BytesIO()
+        img.save(img_bytes, format='PNG')
+        img_base64 = base64.b64encode(img_bytes.getvalue()).decode('utf-8')
 
-        try:
-            # Suppress warnings for clean output
-            os.environ['PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK'] = 'True'
+        # Call DeepSeek-OCR
+        print("Calling DeepSeek-OCR...", end=" ", flush=True)
+        response = requests.post(
+            "http://localhost:11434/api/chat",
+            json={
+                "model": "deepseek-ocr",
+                "messages": [{
+                    "role": "user",
+                    "content": "Extract all text from this image.",
+                    "images": [img_base64]
+                }],
+                "stream": False
+            },
+            timeout=120
+        )
 
-            from paddleocr import PaddleOCR
-            print("Loading PaddleOCR model (may take a moment)...", end=" ", flush=True)
-            ocr = PaddleOCR(lang='en')
-            print("done")
-
-            result = ocr.ocr(temp_path)
-
-            if result and len(result) > 0:
-                # Extract text from result
-                texts = []
-                for page_result in result:
-                    if page_result is None:
-                        continue
-                    if isinstance(page_result, dict):
-                        texts.extend(page_result.get('rec_texts', []))
-                    elif isinstance(page_result, list):
-                        for line in page_result:
-                            if line and len(line) >= 2:
-                                text = line[1][0] if isinstance(line[1], tuple) else line[1]
-                                texts.append(text)
-
-                extracted = ' '.join(texts)
-                print(f"[OK] OCR test passed. Extracted: {extracted[:50]}")
+        if response.status_code == 200:
+            result = response.json()
+            text = result.get("message", {}).get("content", "")
+            if text:
+                print("done")
+                print(f"[OK] DeepSeek-OCR test passed. Output: {text[:80]}...")
                 return True
             else:
-                print("[WARN] OCR returned empty result")
+                print("empty response")
+                print("[WARN] DeepSeek-OCR returned empty result")
                 return False
-
-        finally:
-            os.unlink(temp_path)
+        else:
+            print(f"HTTP {response.status_code}")
+            print(f"[FAIL] DeepSeek-OCR test failed")
+            return False
 
     except ImportError as e:
-        print(f"[SKIP] Cannot run OCR test: {e}")
+        print(f"skipped (missing: {e})")
         return None
     except Exception as e:
-        print(f"[FAIL] OCR test failed: {e}")
+        print(f"failed")
+        print(f"[FAIL] DeepSeek-OCR test failed: {e}")
         return False
 
 
 def main():
-    print("=" * 50)
-    print("PaddleOCR Environment Check")
-    print("=" * 50)
+    print("=" * 55)
+    print("OCR Skill Environment Check")
+    print("(DeepSeek-OCR + PaddleOCR Dual Mode)")
+    print("=" * 55)
     print()
 
-    checks = [
-        ("PaddlePaddle", check_paddlepaddle),
-        ("PaddleOCR", check_paddleocr),
-        ("pdf2image", check_pdf2image),
-        ("Pillow", check_pillow),
-        ("Poppler (PDF)", check_poppler),
-        ("Model Cache", check_model_cache),
+    print("--- Core Requirements (DeepSeek-OCR) ---")
+    checks_core = [
+        ("Ollama Installation", check_ollama),
+        ("Ollama Server", check_ollama_running),
+        ("DeepSeek-OCR Model", check_deepseek_model),
+        ("Python requests", check_requests),
     ]
 
-    results = []
-    for name, check_fn in checks:
+    results_core = []
+    for name, check_fn in checks_core:
         try:
             result = check_fn()
-            results.append((name, result))
+            results_core.append((name, result))
         except Exception as e:
             print(f"[ERROR] {name}: {e}")
-            results.append((name, False))
-        print()
+            results_core.append((name, False))
+
+    print()
+    print("--- Optional: Fast Mode (PaddleOCR) ---")
+    checks_optional = [
+        ("PaddleOCR", check_paddleocr),
+    ]
+
+    results_optional = []
+    for name, check_fn in checks_optional:
+        try:
+            result = check_fn()
+            results_optional.append((name, result))
+        except Exception as e:
+            print(f"[ERROR] {name}: {e}")
+            results_optional.append((name, False))
+
+    print()
+    print("--- Optional: PDF Support ---")
+    checks_pdf = [
+        ("pdf2image", check_pdf2image),
+        ("Poppler", check_poppler),
+    ]
+
+    results_pdf = []
+    for name, check_fn in checks_pdf:
+        try:
+            result = check_fn()
+            results_pdf.append((name, result))
+        except Exception as e:
+            print(f"[ERROR] {name}: {e}")
+            results_pdf.append((name, False))
+
+    # Run DeepSeek-OCR test if all core checks passed
+    all_results = results_core + results_optional + results_pdf
+    core_passed = all(r is True for _, r in results_core)
+
+    if core_passed:
+        test_result = test_deepseek_ocr()
+        all_results.append(("DeepSeek-OCR Test", test_result))
 
     # Summary
-    print("=" * 50)
+    print()
+    print("=" * 55)
     print("Summary")
-    print("=" * 50)
+    print("=" * 55)
 
-    passed = sum(1 for _, r in results if r is True)
-    failed = sum(1 for _, r in results if r is False)
-    info = sum(1 for _, r in results if r is None)
+    passed = sum(1 for _, r in all_results if r is True)
+    failed = sum(1 for _, r in all_results if r is False)
+    warnings = sum(1 for _, r in all_results if r is None)
 
-    for name, result in results:
+    for name, result in all_results:
         if result is True:
             status = "PASS"
         elif result is False:
             status = "FAIL"
         else:
-            status = "INFO"
+            status = "WARN"
         print(f"  {name}: {status}")
 
     print()
     if failed == 0:
-        print("All checks passed! PaddleOCR is ready to use.")
+        print("All core checks passed! OCR Skill is ready.")
         print()
         print("Quick start:")
-        print("  python scripts/ocr.py <image.png>")
-        print("  python scripts/ocr.py <document.pdf>")
+        print("  python scripts/ocr.py image.png           # DeepSeek-OCR (smart)")
+        print("  python scripts/ocr.py image.png --fast    # PaddleOCR (fast)")
+        print("  python scripts/ocr.py image.png --prompt 'Extract table as markdown'")
         return 0
     else:
         print(f"{failed} check(s) failed. Please fix the issues above.")

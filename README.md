@@ -1,30 +1,36 @@
-# OpenCode Paddle-OCR Skill
+# OpenCode OCR Skill
 
 > 让无视觉能力的大模型也能"看"图片 — OpenCode/OpenWork AI OCR Skill
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![OpenCode](https://img.shields.io/badge/OpenCode-Skill-blue)](https://opencode.ai)
-[![PaddleOCR](https://img.shields.io/badge/PaddleOCR-PP--OCRv5-green)](https://github.com/PaddlePaddle/PaddleOCR)
+[![DeepSeek-OCR](https://img.shields.io/badge/DeepSeek--OCR-3B-green)](https://github.com/deepseek-ai/DeepSeek-OCR)
 
 ## 简介
 
-这是一个 **OpenCode/OpenWork** 的 OCR Skill，使用 **PaddleOCR (PP-OCRv5)** 原生 Python 库，为无视觉能力的大模型（如 GLM-4.7）提供图像识别能力。
+这是一个 **OpenCode/OpenWork** 的 OCR Skill，使用 **DeepSeek-OCR 3B** (通过 Ollama) 为无视觉能力的大模型（如 GLM-4.7）提供图像识别能力。
+
+### 双模式设计
+
+| 模式 | 引擎 | 用途 |
+|------|------|------|
+| **默认** | DeepSeek-OCR 3B | 智能提取，支持自定义 prompt |
+| **快速** (`--fast`) | PaddleOCR PP-OCRv5 | 纯文字提取，更快速 |
 
 ### 特性
 
-- **超轻量**: ~200MB 模型文件，CPU 可运行
+- **超强 OCR**: DeepSeek-OCR 在 OCRBench 上得分 834（超越 GPT-4o 的 736）
 - **多语言**: 支持 100+ 种语言
 - **多格式**: 图片 (PNG/JPG/BMP/GIF/WEBP/TIFF) + PDF
-- **复杂识别**: 表格、公式、图表
+- **自定义 prompt**: 可以问图片内容相关的问题
 - **本地运行**: 完全离线，数据安全
-- **无服务依赖**: 不需要后台服务，按需加载
 
 ## 工作原理
 
 ```
 ┌─────────────┐     ┌──────────────────┐     ┌─────────────────┐
-│ 图片/PDF    │────▶│ PaddleOCR        │────▶│ 主模型分析      │
-│             │     │ (本地 Python)    │     │ (GLM-4.7 等)    │
+│ 图片/PDF    │────▶│ DeepSeek-OCR     │────▶│ 主模型分析      │
+│             │     │ (本地 Ollama)    │     │ (GLM-4.7 等)    │
 └─────────────┘     └──────────────────┘     └─────────────────┘
 ```
 
@@ -33,12 +39,19 @@
 ### 1. 安装环境
 
 ```bash
-# 安装 Python 依赖
-pip install paddleocr paddlepaddle
+# 安装 Ollama
+brew install ollama
+brew services start ollama
 
-# 安装 PDF 支持
-pip install pdf2image
+# 下载 DeepSeek-OCR 模型 (约 6.7GB)
+ollama pull deepseek-ocr
+
+# 安装 Python 依赖
+pip install requests pdf2image
 brew install poppler
+
+# (可选) 安装 PaddleOCR 快速模式
+pip install paddleocr paddlepaddle
 ```
 
 ### 2. 安装 Skill
@@ -54,15 +67,18 @@ git clone https://github.com/mr-shaper/opencode-skills-paddle-ocr.git paddle-ocr
 ```bash
 cd paddle-ocr
 
-# 图片 OCR
+# 默认模式 (DeepSeek-OCR)
 python3 scripts/ocr.py image.png
+
+# 自定义 prompt
+python3 scripts/ocr.py table.png --prompt "提取表格为 markdown 格式"
+python3 scripts/ocr.py chart.png --prompt "这个图表的数据是什么？"
+
+# 快速模式 (PaddleOCR)
+python3 scripts/ocr.py image.png --fast
 
 # PDF OCR
 python3 scripts/ocr.py document.pdf
-
-# 指定语言
-python3 scripts/ocr.py image.png --lang en      # 英文
-python3 scripts/ocr.py image.png --lang japan   # 日文
 
 # JSON 输出
 python3 scripts/ocr.py image.png --json
@@ -81,7 +97,7 @@ paddle-ocr/
 ├── .gitignore
 ├── .env.example
 └── scripts/
-    ├── ocr.py            # 核心 OCR 脚本
+    ├── ocr.py            # 核心 OCR 脚本 (双模式)
     ├── setup_check.py    # 环境检查
     └── requirements.txt
 ```
@@ -94,35 +110,45 @@ python3 scripts/setup_check.py
 
 预期输出:
 ```
-[OK] PaddlePaddle installed
-[OK] PaddleOCR installed
-[OK] pdf2image installed
-[OK] Pillow installed
-[OK] Poppler installed
-[OK] Model cache found
+--- Core Requirements (DeepSeek-OCR) ---
+[OK] Ollama installed
+[OK] Ollama server is running
+[OK] DeepSeek-OCR model installed
+[OK] requests installed
 
-All checks passed!
+--- Optional: Fast Mode (PaddleOCR) ---
+[OK] PaddleOCR installed
+
+--- Quick DeepSeek-OCR Test ---
+[OK] DeepSeek-OCR test passed
+
+All core checks passed!
 ```
 
 ## 资源占用
 
-| 状态 | CPU | 内存 | 说明 |
-|------|-----|------|------|
-| **空闲时** | 0% | 0 | 不占用资源（按需加载） |
-| **首次加载** | 高 | ~500MB | 加载模型到内存 |
-| **推理时** | 中-高 | ~500MB-1GB | 处理图片时 |
-| **处理完成** | 0% | 可释放 | 脚本退出后释放 |
+| 状态 | Ollama 服务 | DeepSeek-OCR |
+|------|-------------|--------------|
+| 空闲 | ~30MB | 未加载 |
+| 首次调用 | ~30MB | 加载模型 ~6GB |
+| 推理中 | ~30MB | ~6-8GB |
+| 推理完成 | ~30MB | 保持加载 |
 
-### 模型文件
+### 服务管理
 
-| 组件 | 大小 |
-|------|------|
-| PP-OCRv5 检测模型 | ~50MB |
-| PP-OCRv5 识别模型 | ~100MB |
-| 方向分类模型 | ~10MB |
-| **总计** | **~200MB** |
+```bash
+# 启动 Ollama
+brew services start ollama
 
-> 模型自动缓存在 `~/.paddlex/official_models/`
+# 停止 Ollama（释放内存）
+brew services stop ollama
+
+# 查看已加载模型
+ollama ps
+
+# 卸载模型释放内存
+ollama stop deepseek-ocr
+```
 
 ## 代码集成示例
 
@@ -130,9 +156,10 @@ All checks passed!
 import subprocess
 import json
 
-# 调用 OCR
+# 调用 OCR（支持自定义 prompt）
 result = subprocess.run(
-    ["python3", "scripts/ocr.py", "chart.png", "--json"],
+    ["python3", "scripts/ocr.py", "chart.png", "--json",
+     "--prompt", "提取图表中的所有数据"],
     capture_output=True, text=True,
     cwd="/path/to/paddle-ocr"
 )
@@ -145,15 +172,27 @@ extracted_text = ocr_data["text"]
 prompt = f"分析以下从图片提取的内容:\n{extracted_text}"
 ```
 
+## 模型对比
+
+| 对比项 | DeepSeek-OCR 3B | PaddleOCR PP-OCRv5 |
+|--------|-----------------|-------------------|
+| 类型 | VLM (视觉语言模型) | 传统 OCR |
+| 大小 | 6.7 GB | ~200 MB |
+| 速度 | 10-30秒/图 | 1-3秒/图 |
+| 自定义 prompt | ✅ 支持 | ❌ 不支持 |
+| OCRBench | 834 | - |
+| 使用场景 | 需要理解内容 | 纯文字提取 |
+
 ## 常见问题
 
-### 首次运行很慢？
-首次运行需从 HuggingFace 下载模型（约 200MB），之后使用缓存。
-
-### 网络问题无法下载模型？
+### Ollama 无法连接？
 ```bash
-export PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK=True
-python3 scripts/ocr.py image.png
+brew services start ollama
+```
+
+### 模型未找到？
+```bash
+ollama pull deepseek-ocr
 ```
 
 ### PDF 处理失败？
@@ -162,10 +201,19 @@ brew install poppler
 pip install pdf2image
 ```
 
+### 想释放内存？
+```bash
+brew services stop ollama
+# 或只卸载模型
+ollama stop deepseek-ocr
+```
+
 ## 相关链接
 
+- [DeepSeek-OCR GitHub](https://github.com/deepseek-ai/DeepSeek-OCR)
+- [DeepSeek-OCR HuggingFace](https://huggingface.co/deepseek-ai/DeepSeek-OCR)
 - [PaddleOCR GitHub](https://github.com/PaddlePaddle/PaddleOCR)
-- [PaddleOCR 官方文档](https://paddlepaddle.github.io/PaddleOCR/)
+- [Ollama](https://ollama.ai)
 - [OpenCode](https://opencode.ai)
 
 ## License

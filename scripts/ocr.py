@@ -1,11 +1,14 @@
 #!/usr/bin/env python3
 """
-PaddleOCR Script - Native Python Implementation
+OCR Skill - Dual Mode Implementation
+- Default: DeepSeek-OCR via Ollama (VLM, supports custom prompts)
+- Fast mode: Native PaddleOCR (pure OCR, faster)
+
 Supports: Images (PNG, JPG, JPEG, BMP, GIF, WEBP, TIFF) and PDFs
-Uses PaddlePaddle's PaddleOCR library directly
 """
 
 import argparse
+import base64
 import json
 import os
 import sys
@@ -17,34 +20,84 @@ os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 import warnings
 warnings.filterwarnings('ignore')
 
-try:
-    from paddleocr import PaddleOCR
-except ImportError:
-    print("Error: paddleocr not found. Install with: pip install paddleocr paddlepaddle", file=sys.stderr)
-    sys.exit(1)
-
 # Supported file extensions
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".bmp", ".gif", ".webp", ".tiff", ".tif"}
 PDF_EXTENSION = ".pdf"
 
-# Global OCR instance (lazy loaded)
-_ocr_instance = None
+# Default settings
+DEFAULT_MODEL = "deepseek-ocr"
+OLLAMA_BASE_URL = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434")
 
 
-def get_ocr_instance(lang='ch'):
+# ============================================
+# DeepSeek-OCR via Ollama
+# ============================================
+
+def ocr_with_deepseek(image_path: str, prompt: str = "Extract all text from this image.") -> str:
+    """Perform OCR using DeepSeek-OCR via Ollama."""
+    try:
+        import requests
+    except ImportError:
+        print("Error: requests not found. Install with: pip install requests", file=sys.stderr)
+        sys.exit(1)
+
+    # Read and encode image
+    with open(image_path, "rb") as f:
+        image_base64 = base64.b64encode(f.read()).decode("utf-8")
+
+    # Call Ollama API
+    try:
+        response = requests.post(
+            f"{OLLAMA_BASE_URL}/api/chat",
+            json={
+                "model": DEFAULT_MODEL,
+                "messages": [{
+                    "role": "user",
+                    "content": prompt,
+                    "images": [image_base64]
+                }],
+                "stream": False
+            },
+            timeout=120
+        )
+        response.raise_for_status()
+        result = response.json()
+        return result.get("message", {}).get("content", "")
+    except requests.exceptions.ConnectionError:
+        print("Error: Cannot connect to Ollama. Start with: brew services start ollama", file=sys.stderr)
+        sys.exit(1)
+    except requests.exceptions.Timeout:
+        print("Error: Ollama request timed out.", file=sys.stderr)
+        sys.exit(1)
+    except Exception as e:
+        print(f"Error calling Ollama: {e}", file=sys.stderr)
+        sys.exit(1)
+
+
+# ============================================
+# Native PaddleOCR (Fast Mode)
+# ============================================
+
+_paddle_ocr_instance = None
+
+def get_paddle_ocr_instance(lang='ch'):
     """Get or create PaddleOCR instance."""
-    global _ocr_instance
-    if _ocr_instance is None:
+    global _paddle_ocr_instance
+    if _paddle_ocr_instance is None:
+        try:
+            from paddleocr import PaddleOCR
+        except ImportError:
+            print("Error: paddleocr not found. Install with: pip install paddleocr paddlepaddle", file=sys.stderr)
+            sys.exit(1)
         print("Initializing PaddleOCR (first run may download models)...", file=sys.stderr)
-        # Suppress connectivity check
         os.environ['PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK'] = 'True'
-        _ocr_instance = PaddleOCR(lang=lang)
-    return _ocr_instance
+        _paddle_ocr_instance = PaddleOCR(lang=lang)
+    return _paddle_ocr_instance
 
 
-def ocr_image(image_path: str, lang: str = 'ch') -> str:
-    """Perform OCR on a single image."""
-    ocr = get_ocr_instance(lang)
+def ocr_with_paddle(image_path: str, lang: str = 'ch') -> str:
+    """Perform OCR using native PaddleOCR."""
+    ocr = get_paddle_ocr_instance(lang)
     result = ocr.ocr(image_path)
 
     if result is None or len(result) == 0:
@@ -68,6 +121,10 @@ def ocr_image(image_path: str, lang: str = 'ch') -> str:
 
     return '\n'.join(lines)
 
+
+# ============================================
+# PDF Processing
+# ============================================
 
 def pdf_to_images(pdf_path: str) -> list:
     """Convert PDF pages to temporary image files."""
@@ -97,19 +154,30 @@ def pdf_to_images(pdf_path: str) -> list:
     return temp_paths
 
 
-def process_image(image_path: str, lang: str = 'ch') -> dict:
+# ============================================
+# Main Processing Functions
+# ============================================
+
+def process_image(image_path: str, prompt: str = None, fast_mode: bool = False, lang: str = 'ch') -> dict:
     """Process a single image and return OCR result."""
     print(f"Processing: {image_path}", file=sys.stderr)
-    text = ocr_image(image_path, lang)
+
+    if fast_mode:
+        print("Mode: PaddleOCR (fast)", file=sys.stderr)
+        text = ocr_with_paddle(image_path, lang)
+    else:
+        print("Mode: DeepSeek-OCR (smart)", file=sys.stderr)
+        text = ocr_with_deepseek(image_path, prompt or "Extract all text from this image.")
 
     return {
         "source": str(image_path),
         "type": "image",
+        "mode": "paddle" if fast_mode else "deepseek",
         "text": text
     }
 
 
-def process_pdf(pdf_path: str, lang: str = 'ch') -> dict:
+def process_pdf(pdf_path: str, prompt: str = None, fast_mode: bool = False, lang: str = 'ch') -> dict:
     """Process a PDF file by converting to images and OCR each page."""
     print(f"Processing PDF: {pdf_path}", file=sys.stderr)
     temp_images = pdf_to_images(pdf_path)
@@ -118,7 +186,10 @@ def process_pdf(pdf_path: str, lang: str = 'ch') -> dict:
     try:
         for i, image_path in enumerate(temp_images):
             print(f"OCR page {i+1}/{len(temp_images)}...", file=sys.stderr)
-            text = ocr_image(image_path, lang)
+            if fast_mode:
+                text = ocr_with_paddle(image_path, lang)
+            else:
+                text = ocr_with_deepseek(image_path, prompt or "Extract all text from this image.")
             pages.append({
                 "page": i + 1,
                 "text": text
@@ -134,6 +205,7 @@ def process_pdf(pdf_path: str, lang: str = 'ch') -> dict:
     return {
         "source": str(pdf_path),
         "type": "pdf",
+        "mode": "paddle" if fast_mode else "deepseek",
         "total_pages": len(pages),
         "pages": pages
     }
@@ -155,26 +227,33 @@ def format_output(result: dict, as_json: bool = False) -> str:
 
 def main():
     parser = argparse.ArgumentParser(
-        description="OCR using PaddleOCR (Native Python)",
+        description="OCR Skill - DeepSeek-OCR (default) or PaddleOCR (fast mode)",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  python ocr.py image.png                    # OCR a single image
-  python ocr.py document.pdf                 # OCR all pages of a PDF
-  python ocr.py image.png --json             # Output as JSON
-  python ocr.py image.png --lang en          # English OCR
-  python ocr.py doc.pdf -o result.txt        # Save to file
+  python ocr.py image.png                     # DeepSeek-OCR (smart mode)
+  python ocr.py image.png --fast              # PaddleOCR (fast mode)
+  python ocr.py image.png --prompt "提取表格为markdown"
+  python ocr.py document.pdf                  # OCR all pages of a PDF
+  python ocr.py image.png --json              # Output as JSON
+  python ocr.py doc.pdf -o result.txt         # Save to file
+
+Modes:
+  Default (DeepSeek-OCR): VLM-based, supports custom prompts, smarter
+  --fast (PaddleOCR): Traditional OCR, faster, pure text extraction
 
 Supported formats:
   Images: PNG, JPG, JPEG, BMP, GIF, WEBP, TIFF
   Documents: PDF
-
-Languages:
-  ch (Chinese+English, default), en (English), japan, korean, french, german, etc.
         """
     )
     parser.add_argument("input_file", help="Image or PDF file to process")
-    parser.add_argument("--lang", "-l", default="ch", help="Language (default: ch for Chinese+English)")
+    parser.add_argument("--fast", "-f", action="store_true",
+                        help="Use PaddleOCR for faster pure text extraction")
+    parser.add_argument("--prompt", "-p",
+                        help="Custom prompt for DeepSeek-OCR (ignored in fast mode)")
+    parser.add_argument("--lang", "-l", default="ch",
+                        help="Language for PaddleOCR (default: ch for Chinese+English)")
     parser.add_argument("--json", "-j", action="store_true", help="Output as JSON")
     parser.add_argument("--output", "-o", help="Output file path (default: stdout)")
 
@@ -188,9 +267,9 @@ Languages:
     suffix = input_path.suffix.lower()
 
     if suffix == PDF_EXTENSION:
-        result = process_pdf(str(input_path), args.lang)
+        result = process_pdf(str(input_path), args.prompt, args.fast, args.lang)
     elif suffix in IMAGE_EXTENSIONS:
-        result = process_image(str(input_path), args.lang)
+        result = process_image(str(input_path), args.prompt, args.fast, args.lang)
     else:
         print(f"Error: Unsupported file type: {suffix}", file=sys.stderr)
         print(f"Supported: PDF, {', '.join(sorted(IMAGE_EXTENSIONS))}", file=sys.stderr)
