@@ -63,7 +63,7 @@ def check_model_installed():
 def check_python_deps():
     """Check Python dependencies."""
     deps = {
-        "requests": "pip install requests",
+        "paddleocr": "pip install paddleocr paddlepaddle",
         "pdf2image": "pip install pdf2image"
     }
     all_ok = True

@@ -1,6 +1,6 @@
 ---
 name: paddle-ocr
-description: OCR skill using PaddleOCR-VL (0.9B) via Ollama for text extraction from images and PDFs. Supports 109 languages, tables, formulas, and charts. Use when Claude needs to extract text from images, scan documents, recognize text in screenshots, or parse PDF content that requires OCR.
+description: OCR skill using PaddleOCR (Native Python) for text extraction from images and PDFs. Supports 100+ languages, tables, formulas, and charts. Use when Claude needs to extract text from images, scan documents, recognize text in screenshots, or parse PDF content that requires OCR.
 ---
 
 # PaddleOCR-VL OCR Skill
