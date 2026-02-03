@@ -25,11 +25,12 @@ python3 "/Users/mrshaper/Library/Application Support/com.differentai.openwork/wo
 
 ## Overview
 
-This skill provides OCR (Optical Character Recognition) capabilities using the PaddleOCR-VL 0.9B model through Ollama. It enables text extraction from images and PDFs, with support for:
+This skill provides OCR (Optical Character Recognition) capabilities using native PaddleOCR (PP-OCRv5). It enables text extraction from images and PDFs, with support for:
 
-- **109 languages** including Chinese, English, Japanese, Korean, etc.
+- **100+ languages** including Chinese, English, Japanese, Korean, etc.
 - **Complex elements**: Tables, mathematical formulas, charts
-- **Multiple formats**: PNG, JPG, PDF, BMP, GIF, WEBP
+- **Multiple formats**: PNG, JPG, PDF, BMP, GIF, WEBP, TIFF
+- **No external service**: Runs entirely locally via Python
 
 ## Quick Start
 
@@ -64,7 +65,7 @@ This skill is designed to give image analysis capabilities to models that cannot
 
 ### Workflow
 ```
-Image/PDF → PaddleOCR-VL (Ollama) → Extracted Text → Main Model Analysis
+Image/PDF → PaddleOCR (Native Python) → Extracted Text → Main Model Analysis
 ```
 
 ### Example Integration
@@ -121,55 +122,33 @@ python scripts/ocr.py chinese_document.png  # Automatically detects language
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `OLLAMA_BASE_URL` | `http://localhost:11434` | Ollama server URL |
-| `PADDLEOCR_MODEL` | `MedAIBase/PaddleOCR-VL:0.9b` | Model to use |
+| `PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK` | `True` | Skip connectivity check (use cached models) |
 
 ## First-Time Setup
 
-### 1. Install Ollama
+### 1. Install Python Dependencies
 ```bash
-brew install ollama
+pip install paddleocr paddlepaddle
 ```
 
-### 2. Start Ollama Server
+### 2. Install PDF Support
 ```bash
-brew services start ollama
-# or: ollama serve
-```
-
-### 3. Pull PaddleOCR-VL Model
-```bash
-ollama pull MedAIBase/PaddleOCR-VL:0.9b
-```
-
-### 4. Install Python Dependencies
-```bash
-pip install requests pdf2image
-```
-
-### 5. Install Poppler (for PDF support)
-```bash
+pip install pdf2image
 brew install poppler
 ```
 
-### 6. Verify Setup
+### 3. Verify Setup
 ```bash
 python scripts/setup_check.py
 ```
 
+> **Note**: First run will automatically download models (~200MB) from HuggingFace.
+
 ## Troubleshooting
 
-### "Cannot connect to Ollama"
+### "paddleocr not found"
 ```bash
-# Ensure Ollama is running
-brew services start ollama
-# or
-ollama serve
-```
-
-### "Model not found"
-```bash
-ollama pull MedAIBase/PaddleOCR-VL:0.9b
+pip install paddleocr paddlepaddle
 ```
 
 ### "pdf2image error"
@@ -178,20 +157,25 @@ brew install poppler
 pip install pdf2image
 ```
 
-### Slow Performance
-- PaddleOCR-VL runs on CPU on macOS (still fast for 0.9B model)
-- Large images may take 10-30 seconds
-- Consider resizing very large images before processing
+### First run is slow
+First run downloads models (~200MB) from HuggingFace. Subsequent runs use cached models.
+
+### Network issues downloading models
+```bash
+# Use cached models, skip connectivity check
+export PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK=True
+python scripts/ocr.py image.png
+```
 
 ## Model Information
 
 | Property | Value |
 |----------|-------|
-| Model | PaddleOCR-VL 0.9B |
-| Size | 935 MB |
-| Context | 128K tokens |
-| Languages | 109 |
-| Source | [Ollama Hub](https://ollama.com/MedAIBase/PaddleOCR-VL) |
+| Engine | PaddleOCR PP-OCRv5 |
+| Total Size | ~200 MB |
+| Languages | 100+ |
+| Runtime | CPU (no GPU required) |
+| Source | [PaddleOCR GitHub](https://github.com/PaddlePaddle/PaddleOCR) |
 
 ## See Also
 

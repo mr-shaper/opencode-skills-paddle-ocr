@@ -1,83 +1,57 @@
 #!/usr/bin/env python3
-"""Check PaddleOCR-VL environment setup."""
+"""Check PaddleOCR environment setup."""
 
 import subprocess
 import sys
 
 
-def check_ollama():
-    """Check if Ollama is installed."""
+def check_paddleocr():
+    """Check if PaddleOCR is installed."""
     try:
-        result = subprocess.run(
-            ["ollama", "--version"],
-            capture_output=True,
-            text=True
-        )
-        if result.returncode == 0:
-            version = result.stdout.strip() or result.stderr.strip()
-            print(f"[OK] Ollama installed: {version}")
-            return True
-    except FileNotFoundError:
-        pass
-    print("[FAIL] Ollama not found. Install with: brew install ollama")
-    return False
+        import paddleocr
+        version = getattr(paddleocr, '__version__', 'installed')
+        print(f"[OK] PaddleOCR installed: {version}")
+        return True
+    except ImportError:
+        print("[FAIL] PaddleOCR not found. Install with: pip install paddleocr paddlepaddle")
+        return False
 
 
-def check_ollama_running():
-    """Check if Ollama server is running."""
+def check_paddlepaddle():
+    """Check if PaddlePaddle is installed."""
     try:
-        import requests
-        response = requests.get("http://localhost:11434/api/tags", timeout=5)
-        if response.status_code == 200:
-            print("[OK] Ollama server is running")
-            return True
-    except Exception:
-        pass
-    print("[FAIL] Ollama server not running. Start with: brew services start ollama")
-    return False
+        import paddle
+        version = paddle.__version__
+        print(f"[OK] PaddlePaddle installed: {version}")
+        return True
+    except ImportError:
+        print("[FAIL] PaddlePaddle not found. Install with: pip install paddlepaddle")
+        return False
 
 
-def check_model_installed():
-    """Check if PaddleOCR-VL model is installed."""
+def check_pdf2image():
+    """Check if pdf2image is installed."""
     try:
-        result = subprocess.run(
-            ["ollama", "list"],
-            capture_output=True,
-            text=True
-        )
-        if "PaddleOCR-VL" in result.stdout or "paddleocr" in result.stdout.lower():
-            # Extract model info
-            for line in result.stdout.split('\n'):
-                if 'PaddleOCR-VL' in line or 'paddleocr' in line.lower():
-                    print(f"[OK] PaddleOCR-VL model installed: {line.strip()}")
-                    return True
-            print("[OK] PaddleOCR-VL model installed")
-            return True
-    except Exception:
-        pass
-    print("[WARN] PaddleOCR-VL model not found. Pull with:")
-    print("       ollama pull MedAIBase/PaddleOCR-VL:0.9b")
-    return False
+        import pdf2image
+        version = getattr(pdf2image, '__version__', 'installed')
+        print(f"[OK] pdf2image installed: {version}")
+        return True
+    except ImportError:
+        print("[FAIL] pdf2image not found. Install with: pip install pdf2image")
+        return False
 
 
-def check_python_deps():
-    """Check Python dependencies."""
-    deps = {
-        "paddleocr": "pip install paddleocr paddlepaddle",
-        "pdf2image": "pip install pdf2image"
-    }
-    all_ok = True
-
-    for dep, install_cmd in deps.items():
-        try:
-            __import__(dep)
-            print(f"[OK] Python package: {dep}")
-        except ImportError:
-            print(f"[FAIL] Python package missing: {dep}")
-            print(f"       Install with: {install_cmd}")
-            all_ok = False
-
-    return all_ok
+def check_pillow():
+    """Check if Pillow is installed."""
+    try:
+        from PIL import Image
+        import PIL
+        version = PIL.__version__
+        print(f"[OK] Pillow installed: {version}")
+        return True
+    except ImportError:
+        print("[FAIL] Pillow not found. Install with: pip install Pillow")
+        return False
 
 
 def check_poppler():
@@ -98,12 +72,28 @@ def check_poppler():
         return False
 
 
+def check_model_cache():
+    """Check if PaddleOCR models are cached."""
+    import os
+    from pathlib import Path
+
+    cache_dir = Path.home() / ".paddlex" / "official_models"
+    if cache_dir.exists():
+        models = list(cache_dir.iterdir())
+        if models:
+            print(f"[OK] Model cache found: {cache_dir}")
+            print(f"     {len(models)} model(s) cached")
+            return True
+
+    print("[INFO] No cached models found. Will download on first run (~200MB)")
+    return None  # Not a failure, just info
+
+
 def test_ocr():
     """Quick test of OCR functionality."""
     print("\n--- Quick OCR Test ---")
     try:
-        import requests
-        import base64
+        import os
         import io
         from PIL import Image, ImageDraw
 
@@ -112,36 +102,46 @@ def test_ocr():
         draw = ImageDraw.Draw(img)
         draw.text((10, 10), "Hello OCR Test", fill='black')
 
-        # Save to bytes
-        img_bytes = io.BytesIO()
-        img.save(img_bytes, format='PNG')
-        img_base64 = base64.b64encode(img_bytes.getvalue()).decode('utf-8')
+        # Save to temp file
+        import tempfile
+        with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as f:
+            img.save(f.name, 'PNG')
+            temp_path = f.name
 
-        # Call Ollama
-        payload = {
-            "model": "MedAIBase/PaddleOCR-VL:0.9b",
-            "messages": [{"role": "user", "content": "Extract text from this image.", "images": [img_base64]}],
-            "stream": False
-        }
+        try:
+            # Suppress warnings for clean output
+            os.environ['PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK'] = 'True'
 
-        response = requests.post(
-            "http://localhost:11434/api/chat",
-            json=payload,
-            timeout=60
-        )
+            from paddleocr import PaddleOCR
+            print("Loading PaddleOCR model (may take a moment)...", end=" ", flush=True)
+            ocr = PaddleOCR(lang='en')
+            print("done")
 
-        if response.status_code == 200:
-            result = response.json()
-            text = result.get("message", {}).get("content", "")
-            if text:
-                print(f"[OK] OCR test passed. Extracted: {text[:50]}...")
+            result = ocr.ocr(temp_path)
+
+            if result and len(result) > 0:
+                # Extract text from result
+                texts = []
+                for page_result in result:
+                    if page_result is None:
+                        continue
+                    if isinstance(page_result, dict):
+                        texts.extend(page_result.get('rec_texts', []))
+                    elif isinstance(page_result, list):
+                        for line in page_result:
+                            if line and len(line) >= 2:
+                                text = line[1][0] if isinstance(line[1], tuple) else line[1]
+                                texts.append(text)
+
+                extracted = ' '.join(texts)
+                print(f"[OK] OCR test passed. Extracted: {extracted[:50]}")
                 return True
             else:
                 print("[WARN] OCR returned empty result")
                 return False
-        else:
-            print(f"[FAIL] OCR test failed: HTTP {response.status_code}")
-            return False
+
+        finally:
+            os.unlink(temp_path)
 
     except ImportError as e:
         print(f"[SKIP] Cannot run OCR test: {e}")
@@ -153,16 +153,17 @@ def test_ocr():
 
 def main():
     print("=" * 50)
-    print("PaddleOCR-VL Environment Check")
+    print("PaddleOCR Environment Check")
     print("=" * 50)
     print()
 
     checks = [
-        ("Ollama Installation", check_ollama),
-        ("Ollama Server", check_ollama_running),
-        ("PaddleOCR-VL Model", check_model_installed),
-        ("Python Dependencies", check_python_deps),
+        ("PaddlePaddle", check_paddlepaddle),
+        ("PaddleOCR", check_paddleocr),
+        ("pdf2image", check_pdf2image),
+        ("Pillow", check_pillow),
         ("Poppler (PDF)", check_poppler),
+        ("Model Cache", check_model_cache),
     ]
 
     results = []
@@ -180,20 +181,26 @@ def main():
     print("Summary")
     print("=" * 50)
 
-    passed = sum(1 for _, r in results if r)
-    failed = sum(1 for _, r in results if not r)
+    passed = sum(1 for _, r in results if r is True)
+    failed = sum(1 for _, r in results if r is False)
+    info = sum(1 for _, r in results if r is None)
 
     for name, result in results:
-        status = "PASS" if result else "FAIL"
+        if result is True:
+            status = "PASS"
+        elif result is False:
+            status = "FAIL"
+        else:
+            status = "INFO"
         print(f"  {name}: {status}")
 
     print()
     if failed == 0:
-        print("All checks passed! PaddleOCR-VL is ready to use.")
+        print("All checks passed! PaddleOCR is ready to use.")
         print()
         print("Quick start:")
-        print("  python ocr.py <image.png>")
-        print("  python ocr.py <document.pdf>")
+        print("  python scripts/ocr.py <image.png>")
+        print("  python scripts/ocr.py <document.pdf>")
         return 0
     else:
         print(f"{failed} check(s) failed. Please fix the issues above.")
